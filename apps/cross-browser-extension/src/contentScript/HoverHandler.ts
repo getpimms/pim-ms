@@ -5,6 +5,9 @@ class HoverHandler {
   private linkDetector: LinkDetector;
   private linkListeners = new WeakMap<HTMLElement, any>();
   private hoverTimeout: number | null = null;
+  private hoverRaf: number | null = null; // throttle to next frame
+  private pendingLink: LinkData | null = null;
+  private hideDelayMs = 120; // quick hide to avoid flicker
 
   constructor(linkDetector: LinkDetector) {
     this.linkDetector = linkDetector;
@@ -30,15 +33,25 @@ class HoverHandler {
       element.removeEventListener('mouseleave', existingListeners.mouseLeave);
     }
 
-    // Create new listeners
+    // Create new listeners with rAF throttling for responsiveness
     const listeners = {
-      mouseEnter: () => {
-        console.log('🎯 Hovering:', link.text);
-        this.showHoveredLink(link);
+      mouseEnter: (e: MouseEvent) => {
+        // schedule on next frame; collapse rapid moves
+        this.pendingLink = link;
+        if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);
+        this.hoverRaf = requestAnimationFrame(() => {
+          this.hoverRaf = null;
+          if (this.pendingLink) {
+            this.showHoveredLink(this.pendingLink);
+          }
+        });
       },
-      mouseLeave: () => {
-        console.log('👋 Left hover:', link.text);
-        this.hideHoveredLink();
+      mouseLeave: (e: MouseEvent) => {
+        // small delay to avoid flicker when crossing gaps
+        if (this.hoverTimeout) clearTimeout(this.hoverTimeout);
+        this.hoverTimeout = window.setTimeout(() => {
+          this.hideHoveredLink();
+        }, this.hideDelayMs);
       }
     };
 
@@ -49,56 +62,26 @@ class HoverHandler {
   }
 
   private showHoveredLink(link: LinkData) {
+    
     // Clear any existing timeout
     if (this.hoverTimeout) {
       clearTimeout(this.hoverTimeout);
     }
 
-    // Send message to show hovered link (with error handling)
-    try {
-      chrome.runtime.sendMessage({
-        type: 'HOVERED_LINK',
-        link: {
-          ...link,
-          element: undefined // Don't send DOM element
-        }
-      }).catch(() => {
-        // Ignore errors when popup is not open
-        console.log('📪 Failed to send hover message - popup may not be open');
-      });
-    } catch (error) {
-      console.log('⚠️ Extension context invalidated:', error);
-    }
-
-    // Also notify panel manager if it exists
+    // Only notify the callback - message sending is handled centrally in index.ts
     if (this.onHoveredLink) {
       this.onHoveredLink(link);
     }
   }
 
   private hideHoveredLink() {
-    // Set timeout to hide after 5 seconds
     if (this.hoverTimeout) {
       clearTimeout(this.hoverTimeout);
+      this.hoverTimeout = null;
     }
-
-    this.hoverTimeout = window.setTimeout(() => {
-      try {
-        chrome.runtime.sendMessage({
-          type: 'HIDE_HOVERED_LINK'
-        }).catch(() => {
-          // Ignore errors when popup is not open
-          console.log('📪 Failed to send hide hover message - popup may not be open');
-        });
-      } catch (error) {
-        console.log('⚠️ Extension context invalidated:', error);
-      }
-
-      // Also notify panel manager if it exists
-      if (this.onHideHoveredLink) {
-        this.onHideHoveredLink();
-      }
-    }, 5000);
+    if (this.onHideHoveredLink) {
+      this.onHideHoveredLink();
+    }
   }
 
   // Callbacks for external components
@@ -112,6 +95,10 @@ class HoverHandler {
   public destroy() {
     if (this.hoverTimeout) {
       clearTimeout(this.hoverTimeout);
+    }
+    if (this.hoverRaf) {
+      cancelAnimationFrame(this.hoverRaf);
+      this.hoverRaf = null;
     }
   }
 }

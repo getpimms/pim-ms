@@ -19,9 +19,9 @@ module.exports = {
                 // Configure multiple entry points for extension
           webpackConfig.entry = {
             main: webpackConfig.entry, // Use original CRA entry point
-            popup: resolveOwn('src/popup/index.tsx'),
             background: resolveOwn('src/background/index.ts'),
-            contentScript: resolveOwn('src/contentScript/index.ts'),
+            contentScript: resolveOwn('src/contentScript/index.tsx'),
+            offscreen: resolveOwn('src/offscreen/index.ts'),
           };
 
       // Configure output for multiple bundles
@@ -41,6 +41,32 @@ module.exports = {
       };
       webpackConfig.optimization.runtimeChunk = false;
 
+      // Add polyfills for Node.js modules used by @dub/utils
+      webpackConfig.resolve.fallback = {
+        ...webpackConfig.resolve.fallback,
+        "crypto": require.resolve("crypto-browserify"),
+        "stream": require.resolve("stream-browserify"),
+        "util": require.resolve("util"),
+        "buffer": require.resolve("buffer"),
+        "process": require.resolve("process/browser"),
+        "vm": require.resolve("vm-browserify")
+      };
+
+      // Provide global variables for polyfills
+      const webpack = require('webpack');
+      webpackConfig.plugins = [
+        ...webpackConfig.plugins,
+        new webpack.ProvidePlugin({
+          process: 'process/browser',
+          Buffer: ['buffer', 'Buffer'],
+        }),
+        // Inject env used by logger
+        new webpack.DefinePlugin({
+          'process.env.REACT_APP_BUILD_ENV': JSON.stringify(process.env.REACT_APP_BUILD_ENV || env),
+          'process.env.NODE_ENV': JSON.stringify(env),
+        }),
+      ];
+
        addPlugins(webpackConfig, [
         new CopyPlugin({
           patterns: [
@@ -55,6 +81,20 @@ module.exports = {
             ]
         })
       ]);
+
+      // Ensure panel.css is available in dev build output (copy on rebuilds)
+      webpackConfig.plugins.push(
+        new CopyPlugin({
+          patterns: [
+            {
+              from: resolveOwn('public/panel.css'),
+              to: webpackConfig.output.path,
+              noErrorOnMissing: true,
+              force: true
+            }
+          ]
+        })
+      );
 
       return webpackConfig;
     }

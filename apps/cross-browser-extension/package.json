@@ -3,16 +3,28 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "craco build",
+    "build": "pnpm build:css && craco build",
     "clean": "rm -rf .turbo && rm -rf node_modules && rm -rf build",
-    "dev": "PORT=4444 craco start"
+    "dev": "pnpm build:css && (pnpm watch:css:public & pnpm watch:css:dev &) && PORT=4444 craco start",
+    "build:css": "tailwindcss -c tailwind.config.js -i ./src/contentScript/styles.css -o ./public/panel.css --minify && mkdir -p ./dev && cp ./public/panel.css ./dev/panel.css",
+    "watch:css:public": "CHOKIDAR_USEPOLLING=1 tailwindcss -c tailwind.config.js -i ./src/contentScript/styles.css -o ./public/panel.css --watch",
+    "watch:css:dev": "CHOKIDAR_USEPOLLING=1 tailwindcss -c tailwind.config.js -i ./src/contentScript/styles.css -o ./dev/panel.css --watch"
   },
   "dependencies": {
-    "@types/react": "^19.1.9",
+    "@dub/utils": "workspace:*",
     "@types/react-dom": "^19.1.7",
-    "react": "^19.1.1",
+    "@types/react": "^19.1.9",
+    "ahooks": "^3.9.0",
+    "buffer": "^6.0.3",
+    "crypto-browserify": "^3.12.1",
+    "sonner": "^1.5.0",
+    "lucide-react": "0.539.0",
+    "process": "^0.11.10",
     "react-dom": "^19.1.1",
-    "ahooks": "^3.9.0"
+    "react": "^19.1.1",
+    "stream-browserify": "^3.0.0",
+    "util": "^0.12.5",
+    "vm-browserify": "^1.1.2"
   },
   "devDependencies": {
     "@craco/craco": "^7.1.0",

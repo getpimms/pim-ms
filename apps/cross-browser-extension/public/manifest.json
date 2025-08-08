@@ -4,7 +4,6 @@
   "description": "Link detection and web app integration for PIMMS",
   "version": "1.0.0",
   "action": {
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/16/icon.png",
       "32": "icons/32/icon.png",
@@ -30,14 +29,15 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["fonts/*.woff2", "assets/*", "icons/*"],
+      "resources": ["fonts/*.woff2", "assets/*", "icons/*", "panel.css"],
       "matches": ["<all_urls>"]
     }
   ],
   "permissions": [
     "activeTab",
     "storage",
-    "tabs"
+    "tabs",
+    "offscreen"
   ],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
