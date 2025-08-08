@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "PIMMS Extension",
+  "description": "Link detection and web app integration for PIMMS",
+  "version": "1.0.0",
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16/icon.png",
+      "32": "icons/32/icon.png",
+      "48": "icons/48/icon.png",
+      "128": "icons/128/icon.png"
+    }
+  },
+  "background": {
+    "service_worker": "static/js/background.bundle.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "all_frames": true,
+      "js": ["static/js/contentScript.bundle.js"]
+    }
+  ],
+  "icons": {
+    "16": "icons/16/icon.png",
+    "32": "icons/32/icon.png",
+    "48": "icons/48/icon.png",
+    "128": "icons/128/icon.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["fonts/*.woff2", "assets/*", "icons/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
