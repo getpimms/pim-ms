@@ -1,7 +1,55 @@
 // Offscreen document script: performs cross-origin fetches and returns results
+import { APP_DOMAIN } from "@dub/utils";
 
-const API_URL = 'https://api.pimms.io/links';
-const API_KEY = 'pimms_mgLHUgFHTxDzC0ZuDQkSsnzL';
+const API_URL = `${APP_DOMAIN}/api/links`;
+
+let cachedWorkspaceSlug: string | null = null;
+let lastWorkspaceFetchTs = 0;
+const WORKSPACE_CACHE_MS = 5 * 60 * 1000;
+
+async function getDefaultWorkspaceSlug(): Promise<string | null> {
+  const now = Date.now();
+  if (cachedWorkspaceSlug && now - lastWorkspaceFetchTs < WORKSPACE_CACHE_MS) {
+    return cachedWorkspaceSlug;
+  }
+  try {
+    const meRes = await fetch(`${APP_DOMAIN}/api/me`, { credentials: 'include' });
+    
+    // Detect auth errors and signal cache invalidation
+    if (meRes.status === 401 || meRes.status === 403) {
+      console.log('[OFFSCREEN][ME] Auth error detected, signaling cache invalidation');
+      chrome.runtime.sendMessage({ 
+        type: 'PIMMS_AUTH_ERROR', 
+        requestId: 'workspace-fetch', 
+        status: meRes.status,
+        source: 'me' 
+      });
+    }
+    
+    if (meRes.ok) {
+      const me = await meRes.json().catch(() => null as any);
+      const slug = (me?.defaultWorkspace as string | null) || null;
+      if (slug) {
+        cachedWorkspaceSlug = slug;
+        lastWorkspaceFetchTs = now;
+        return slug;
+      }
+    }
+  } catch {}
+  try {
+    const wsRes = await fetch(`${APP_DOMAIN}/api/workspaces`, { credentials: 'include' });
+    if (wsRes.ok) {
+      const list = await wsRes.json().catch(() => [] as any[]);
+      const slug = (Array.isArray(list) && list.length > 0 && list[0]?.slug) ? list[0].slug as string : null;
+      if (slug) {
+        cachedWorkspaceSlug = slug;
+        lastWorkspaceFetchTs = now;
+        return slug;
+      }
+    }
+  } catch {}
+  return null;
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return false;
@@ -12,11 +60,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         console.log('[OFFSCREEN] Fetching PIMMS API...', API_URL);
-        const res = await fetch(API_URL, {
+        const slug = await getDefaultWorkspaceSlug();
+        const url = slug ? `${API_URL}?projectSlug=${encodeURIComponent(slug)}` : API_URL;
+        const res = await fetch(url, {
           method: 'POST',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`
           },
           body: JSON.stringify({
             url: href,
@@ -28,6 +78,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           })
         });
         console.log('[OFFSCREEN] Fetch done', res.status);
+        
+        // Detect auth errors and signal cache invalidation
+        if (res.status === 401 || res.status === 403) {
+          console.log('[OFFSCREEN][SHORTEN] Auth error detected, signaling cache invalidation');
+          chrome.runtime.sendMessage({ 
+            type: 'PIMMS_AUTH_ERROR', 
+            requestId, 
+            status: res.status,
+            source: 'shorten' 
+          });
+        }
+        
         const data = await res.json().catch(() => ({}));
         const shortened = data?.shortLink || data?.short_url || data?.shortUrl || data?.link || data?.url;
         console.log('[OFFSCREEN] Parsed response', { shortened, data });
@@ -60,9 +122,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // if (utm_source) qs.set('utm_source', utm_source);
         // if (utm_medium) qs.set('utm_medium', utm_medium);
         if (utm_campaign) qs.set('utm_campaign', utm_campaign);
-        const url = `https://api.pimms.io/analytics?${qs.toString()}`;
-        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${API_KEY}` } });
+        const slug = await getDefaultWorkspaceSlug();
+        if (slug) qs.set('projectSlug', slug);
+        const url = `${APP_DOMAIN}/api/analytics?${qs.toString()}`;
+        const res = await fetch(url, { credentials: 'include' });
         console.log('[OFFSCREEN][ANALYTICS] Fetch done', res.status);
+        
+        // Detect auth errors and signal cache invalidation
+        if (res.status === 401 || res.status === 403) {
+          console.log('[OFFSCREEN][ANALYTICS] Auth error detected, signaling cache invalidation');
+          chrome.runtime.sendMessage({ 
+            type: 'PIMMS_AUTH_ERROR', 
+            requestId, 
+            status: res.status,
+            source: 'analytics' 
+          });
+        }
+        
         const data = await res.json().catch(() => ({} as any));
         let totals = (data?.totals || data?.summary || {}) as any;
         if (!totals || (typeof totals === 'object' && Object.keys(totals).length === 0)) {
@@ -79,6 +155,65 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.runtime.sendMessage({ type: 'PIMMS_ANALYTICS_RESULT', requestId, ok: res.ok, totals, timeseries });
       } catch (e) {
         chrome.runtime.sendMessage({ type: 'PIMMS_ANALYTICS_RESULT', requestId, ok: false, error: String(e) });
+      }
+    })();
+    return false;
+  }
+  if (message.type === 'CHECK_AUTH' && (message.forwarded === true || message._from === 'background')) {
+    const { requestId } = message as any;
+    (async () => {
+      try {
+        const res = await fetch(`${APP_DOMAIN}/api/me`, { credentials: 'include', cache: 'no-store' });
+        
+        // Detect auth errors and signal cache invalidation for CHECK_AUTH too
+        if (res.status === 401 || res.status === 403) {
+          console.log('[OFFSCREEN][CHECK_AUTH] Auth error detected, signaling cache invalidation');
+          chrome.runtime.sendMessage({ 
+            type: 'PIMMS_AUTH_ERROR', 
+            requestId, 
+            status: res.status,
+            source: 'check_auth' 
+          });
+        }
+        
+        let user: any = null;
+        if (res.ok) {
+          user = await res.json().catch(() => null);
+        }
+        chrome.runtime.sendMessage({ type: 'CHECK_AUTH_RESULT', requestId, ok: res.ok, user });
+      } catch (e) {
+        chrome.runtime.sendMessage({ type: 'CHECK_AUTH_RESULT', requestId, ok: false, error: String(e) });
+      }
+    })();
+    return false;
+  }
+  if (message.type === 'PIMMS_WORKSPACE_REQUEST' && (message.forwarded === true || message._from === 'background')) {
+    const { requestId, workspaceSlug } = message as any;
+    (async () => {
+      try {
+        const res = await fetch(`${APP_DOMAIN}/api/workspaces/${encodeURIComponent(workspaceSlug)}`, { 
+          credentials: 'include', 
+          cache: 'no-store' 
+        });
+        
+        // Detect auth errors and signal cache invalidation
+        if (res.status === 401 || res.status === 403) {
+          console.log('[OFFSCREEN][WORKSPACE] Auth error detected, signaling cache invalidation');
+          chrome.runtime.sendMessage({ 
+            type: 'PIMMS_AUTH_ERROR', 
+            requestId, 
+            status: res.status,
+            source: 'workspace' 
+          });
+        }
+        
+        let workspace: any = null;
+        if (res.ok) {
+          workspace = await res.json().catch(() => null);
+        }
+        chrome.runtime.sendMessage({ type: 'PIMMS_WORKSPACE_RESULT', requestId, ok: res.ok, workspace });
+      } catch (e) {
+        chrome.runtime.sendMessage({ type: 'PIMMS_WORKSPACE_RESULT', requestId, ok: false, error: String(e) });
       }
     })();
     return false;

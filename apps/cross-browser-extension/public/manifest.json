@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "PIMMS Extension",
-  "description": "Link detection and web app integration for PIMMS",
+  "name": "PIMMS",
+  "description": "Bring revenue metrics to your email marketing software. Know how your email campaigns convert and how much revenue they bring.",
   "version": "1.0.0",
   "action": {
     "default_icon": {
@@ -16,9 +16,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "all_frames": true,
-      "js": ["static/js/contentScript.bundle.js"]
+      "matches": ["*://resend.com/*", "*://*.resend.com/*", "*://brevo.com/*", "*://*.brevo.com/*"],
+      "all_frames": false,
+      "run_at": "document_idle",
+      "js": ["content-gate.js"]
     }
   ],
   "icons": {
@@ -30,14 +31,16 @@
   "web_accessible_resources": [
     {
       "resources": ["fonts/*.woff2", "assets/*", "icons/*", "panel.css"],
-      "matches": ["<all_urls>"]
+      "matches": ["*://resend.com/*", "*://*.resend.com/*", "*://brevo.com/*", "*://*.brevo.com/*"]
     }
   ],
   "permissions": [
     "activeTab",
     "storage",
     "tabs",
-    "offscreen"
+    "offscreen",
+    "cookies",
+    "scripting"
   ],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {

@@ -25,12 +25,18 @@ export function toast(toast: Omit<ToastProps, 'id'>) {
   return id;
 }
 
+const COLORS = {
+  success: '#16a34a',
+  error: '#dc2626',
+  text: '#111827',
+  subText: '#6b7280',
+  close: '#6b7280'
+};
+
 function Toast(props: ToastProps) {
   const { id, title, description, type } = props;
   const isSuccess = type === 'success';
-  const iconColor = isSuccess ? '#16a34a' : '#dc2626'; // green-600 / red-600
-  const textColor = '#111827'; // neutral-900
-  const subTextColor = '#6b7280'; // neutral-500/600
+  const iconColor = isSuccess ? COLORS.success : COLORS.error;
 
   const containerStyle: React.CSSProperties = {
     position: 'absolute',
@@ -61,14 +67,14 @@ function Toast(props: ToastProps) {
   };
 
   const titleStyle: React.CSSProperties = {
-    color: textColor,
+    color: COLORS.text,
     fontSize: 14,
     fontWeight: 600,
     lineHeight: 1.2,
   };
 
   const descStyle: React.CSSProperties = {
-    color: subTextColor,
+    color: COLORS.subText,
     fontSize: 12,
     marginTop: 2,
   };
@@ -79,7 +85,7 @@ function Toast(props: ToastProps) {
     padding: 4,
     marginLeft: 8,
     cursor: 'pointer',
-    color: '#6b7280',
+    color: COLORS.close,
   };
 
   return (

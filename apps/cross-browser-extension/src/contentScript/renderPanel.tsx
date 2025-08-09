@@ -76,23 +76,14 @@ export const renderPanel = () => {
   shadowRoot.appendChild(mountEl);
 
   const root = createRoot(mountEl);
-  root.render(
-    <React.StrictMode>
-      <PanelApp
-        onDestroy={() => {
-          logger.debug('🧹 Destroying PIMMS panel...');
-          root.unmount();
-          if (host.parentNode) host.parentNode.removeChild(host);
-        }}
-      />
-    </React.StrictMode>
-  );
+  root.render(<PanelApp />);
 
   logger.debug('✅ PIMMS React panel rendered inside Shadow DOM');
 
   return () => {
     logger.debug('🧹 Unmounting PIMMS panel...');
     if (cssPollInterval) window.clearInterval(cssPollInterval);
+    try { (window as any).pimmsPanelApp?.destroy?.(); } catch {}
     root.unmount();
     if (host.parentNode) host.parentNode.removeChild(host);
   };

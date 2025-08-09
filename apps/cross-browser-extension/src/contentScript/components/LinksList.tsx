@@ -1,9 +1,10 @@
 import React from 'react';
 import { LinkData } from '../../types';
-import Badge from './ui/Badge';
 import { cn } from '@dub/utils';
 import isPimmsLink from '../utils/isPimmsLink';
+import { formatUrl } from '../utils/formatUrl';
 import LinkLogo from './LinkLogo';
+
 
 interface LinksListProps {
   links: LinkData[];
@@ -13,28 +14,12 @@ interface LinksListProps {
 }
 
 const LinksList: React.FC<LinksListProps> = ({ links, onLinkClick, onLinkHover, onLinkUnhover }) => {
-  const formatUrl = (href: string) => {
-    try {
-      const url = new URL(href);
-      return {
-        protocol: url.protocol + '//',
-        domainPart: url.hostname,
-        pathAndParams: url.pathname + url.search + url.hash
-      };
-    } catch {
-      return {
-        protocol: '',
-        domainPart: href,
-        pathAndParams: ''
-      };
-    }
-  };
 
   return (
     <div className="h-[340px] overflow-y-auto">
       {links.map((link) => {
         const { domainPart, pathAndParams } = formatUrl(link.href);
-        const shortened = isPimmsLink(link.href);
+        const isShortened = isPimmsLink(link.href);
 
         return (
           <div
@@ -53,7 +38,10 @@ const LinksList: React.FC<LinksListProps> = ({ links, onLinkClick, onLinkHover, 
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-2 font-mono text-[13px]">
-                  <span className="truncate"><span className="font-semibold text-[#3971ff]">{domainPart}</span><span className="text-neutral-800">{pathAndParams}</span></span>
+                  <span className="truncate">
+                    <span className="font-semibold text-[#3971ff]">{domainPart}</span>
+                    <span className="text-neutral-800">{pathAndParams}</span>
+                  </span>
                 </div>
                 <div className="mt-0.5 flex items-center gap-1 text-[12px] text-neutral-500">
                   <span className="opacity-70">↳</span>
@@ -61,7 +49,7 @@ const LinksList: React.FC<LinksListProps> = ({ links, onLinkClick, onLinkHover, 
                 </div>
               </div>
             </div>
-            {shortened && (
+            {isShortened && (
               <span
                 className="ml-2 inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700"
                 title="Already shortened"

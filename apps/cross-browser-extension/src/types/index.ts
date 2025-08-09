@@ -16,12 +16,13 @@ export interface EmailMarketingDomainConfig {
   rootSelectors?: string[];
   // XPath for the analytics page container where we should inject PIMMS analytics block
   analyticsPageXPath?: string;
+  // Optional regex (as string) that must match window.location.href for onboarding block injection.
+  onboardingPageUrlPatterns?: string[];
+  // Optional regex (as string) that must match window.location.href for detection block injection.
+  detectionPageUrlPattern?: string;
   // Optional regex (as string) that must match window.location.href for analytics block injection.
   // Example for resend.com analytics pages: "^https?:\\/\\/(?:www\\.)?resend\\.com\\/broadcasts\\/[0-9a-fA-F-]{36}$"
   analyticsPageUrlPattern?: string;
-  // Optional CSS selector that must be present before we show any analytics UI (including skeletons).
-  // Used to wait for the host app's analytics view to finish mounting (e.g. a header inside the container).
-  analyticsReadySelector?: string;
   // Optional regex to extract a campaign/email/broadcast ID from current URL (first capturing group)
   broadcastIdRegex?: string;
   // Default UTM values injected when creating links for this domain
@@ -45,11 +46,26 @@ export interface ChromeMessage {
 export const EMAIL_MARKETING_DOMAINS: EmailMarketingDomainConfig[] = [
   {
     domain: 'resend.com',
+    onboardingPageUrlPatterns: ['^https?:\/\/(?:www\.)?resend\.com\/broadcasts$', '^https?:\/\/(?:www\.)?resend\.com\/?$'],
+    detectionPageUrlPattern: '^https?:\/\/(?:www\.)?resend\.com\/broadcasts\/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/editor$',
     rootSelectors: ['.emailEditor', '.editorSelection'],
-    analyticsPageUrlPattern: '^https?:\\/\\/(?:www\\.)?resend\\.com\\/broadcasts\\/[0-9a-fA-F-]{36}$',
-    analyticsReadySelector: '.scrollContainer h1',
-    broadcastIdRegex: '^https?:\\/\\/(?:www\\.)?resend\\.com\\/broadcasts\\/([0-9a-fA-F-]{36})$',
+    // Allow optional trailing segments after the broadcast ID (e.g., /summary, /overview)
+    analyticsPageUrlPattern: '^https?:\/\/(?:www\.)?resend\.com\/broadcasts\/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$',
+    // XPath selects the first child inside .scrollContainer; injector will insert after this child
+    analyticsPageXPath: "//*[contains(@class,'scrollContainer')][1]/*[2]/*[1]/*",
+    broadcastIdRegex: '^https?:\\/\\/(?:www\\.)?resend\\.com\\/broadcasts\\/([0-9a-fA-F-]{36})(?:\/.*)?$',
     defaultUtmSource: 'resend.com',
+    defaultUtmMedium: 'email'
+  },
+  {
+    domain: 'brevo.com',
+    rootSelectors: ['#canvas'],
+    onboardingPageUrlPatterns: ['^https?:\/\/(?:www|app\.)?brevo\.com\/?$', '^https?:\/\/(?:www|app\.)?brevo\.com\/campaigns\/(.*)$'],
+    detectionPageUrlPattern: '^https?:\/\/(?:www|app\.)?brevo\.com\/editor\/(.*)$',
+    analyticsPageUrlPattern: '^https?:\/\/(?:www|app\.)?brevo\.com\/marketing-reports\/email\/([0-9]{1,})\/overview$',
+    analyticsPageXPath: "//*[@id='email_reports']/div/div[2]/div/div",
+    broadcastIdRegex: '^https?:\/\/(?:www|app\.)?brevo\.com\/editor\/(.*)$',
+    defaultUtmSource: 'brevo.com',
     defaultUtmMedium: 'email'
   },
   // Add more domains here with precise scoping and behaviors as needed

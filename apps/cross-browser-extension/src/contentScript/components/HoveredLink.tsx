@@ -2,6 +2,7 @@ import { cn } from "@dub/utils";
 import React from "react";
 import { LinkData } from "../../types";
 import isPimmsLink from "../utils/isPimmsLink";
+import { formatUrl } from "../utils/formatUrl";
 import Badge from "./ui/Badge";
 import Button from "./ui/Button";
 import { IconArrowLeft } from "./ui/icons";
@@ -13,7 +14,7 @@ interface HoveredLinkProps {
   isLoading?: boolean;
   shortenedHref?: string | null; // when present, show copy CTA
   onCopyShortened?: (href: string) => void;
-  isShortenedReflected?: boolean;
+
 }
 
 const HoveredLink: React.FC<HoveredLinkProps> = ({
@@ -23,29 +24,11 @@ const HoveredLink: React.FC<HoveredLinkProps> = ({
   isLoading = false,
   shortenedHref,
   onCopyShortened,
-  isShortenedReflected = false,
-}) => {
-  const formatUrl = (href: string) => {
-    try {
-      const url = new URL(href);
-      return {
-        protocol: url.protocol + "//",
-        domainPart: url.hostname,
-        pathAndParams: url.pathname + url.search + url.hash,
-      };
-    } catch {
-      return {
-        protocol: "",
-        domainPart: href,
-        pathAndParams: "",
-      };
-    }
-  };
 
+}) => {
   const { domainPart, pathAndParams } = formatUrl(link.href);
   const isAlreadyPimms = isPimmsLink(link.href);
-  const hasShortened =
-    typeof shortenedHref === "string" && shortenedHref.length > 0;
+  const hasShortened = Boolean(shortenedHref);
 
   return (
     <div className="flex h-[340px] flex-col p-4">
@@ -93,18 +76,19 @@ const HoveredLink: React.FC<HoveredLinkProps> = ({
       {hasShortened ? (
         <Button
           variant="primary"
+          size="lg"
           onClick={() => shortenedHref && onCopyShortened?.(shortenedHref)}
-          className="mb-3 w-full"
-          disabled={isShortenedReflected}
+          className="mb-4 w-full"
         >
-          {isShortenedReflected ? 'Copied' : 'Copy link'}
+          Copy link
         </Button>
       ) : (
         <Button
           variant="primary"
+          size="lg"
           onClick={() => !isAlreadyPimms && onShortenClick(link.href)}
           loading={isLoading}
-          className="mb-3 w-full"
+          className="mb-4 w-full"
           disabled={isAlreadyPimms}
         >
           {isAlreadyPimms ? "Already a pim.ms link" : "Shorten with PIMMS"}

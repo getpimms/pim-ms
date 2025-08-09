@@ -1,5 +1,53 @@
+import { APP_DOMAIN } from "@dub/utils";
 import { EmailMarketingDomainConfig, EMAIL_MARKETING_DOMAINS } from "../../types";
 import { logger } from "../../utils/logger";
+
+async function waitForXPath(xpath: string, timeoutMs: number = 3000, intervalMs: number = 100): Promise<HTMLElement | null> {
+  const start = Date.now();
+  try {
+    const res = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+    const el = res.singleNodeValue as HTMLElement | null;
+    if (el) return el;
+  } catch {}
+  return new Promise((resolve) => {
+    const id = window.setInterval(() => {
+      if (Date.now() - start >= timeoutMs) {
+        clearInterval(id);
+        resolve(null);
+        return;
+      }
+      try {
+        const res = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        const el = res.singleNodeValue as HTMLElement | null;
+        if (el) {
+          clearInterval(id);
+          resolve(el);
+        }
+      } catch {}
+    }, intervalMs);
+  });
+}
+
+function prepareAnalyticsRequest(hostname: string, defaultSource?: string, defaultMedium?: string) {
+  const requestId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const hostLower = hostname.toLowerCase();
+  const domainCfg = EMAIL_MARKETING_DOMAINS.find(d => hostLower === d.domain || hostLower.endsWith(`.${d.domain}`));
+  
+  let utm_campaign: string | null = null;
+  if (domainCfg?.broadcastIdRegex) {
+    try {
+      const match = new RegExp(domainCfg.broadcastIdRegex, 'i').exec(window.location.href);
+      if (match?.[1]) utm_campaign = match[1];
+    } catch {}
+  }
+  
+  return {
+    requestId,
+    utm_source: domainCfg?.defaultUtmSource ?? defaultSource ?? null,
+    utm_medium: domainCfg?.defaultUtmMedium ?? defaultMedium ?? null,
+    utm_campaign
+  };
+}
 
 type Metrics = {
   clicks: number;
@@ -13,12 +61,56 @@ type Metrics = {
   recentVisitors: number;
 };
 
-function formatMoney(n: number): string {
-  const v = Math.round(n);
-  return `$${v}`;
+const formatMoney = (n: number): string => `$${Math.round(n)}`;
+
+function createUserHeaderHTML(user: any, workspace: any): string {
+  if (!user) return '';
+  
+  const getInitials = (name: string): string => {
+    return name
+      .split(' ')
+      .map((part: string) => part.charAt(0))
+      .slice(0, 2)
+      .join('')
+      .toUpperCase();
+  };
+
+  const displayName = workspace?.name || user.name || 'User';
+  const secondaryText = workspace?.name ? user.name : (user.email || '');
+  const dashboardUrl = workspace?.slug 
+    ? `${APP_DOMAIN}/${workspace.slug}` 
+    : `${APP_DOMAIN}/dashboard`;
+
+  return `
+    <div style="border-top:1px solid #e5e7eb;padding-top:8px;margin-bottom:8px;">
+      <div onclick="window.open('${dashboardUrl}', '_blank', 'noopener,noreferrer')" 
+           style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px;border-radius:8px;transition:background-color 120ms;text-decoration:none;" 
+           onmouseover="this.style.backgroundColor='#f3f4f6'" 
+           onmouseout="this.style.backgroundColor='transparent'"
+           title="Open Dashboard">
+        <div style="position:relative;flex-shrink:0;">
+          ${user.image 
+            ? `<img src="${user.image}" alt="${user.name}" style="width:20px;height:20px;border-radius:50%;object-fit:cover;border:1px solid #e5e7eb;" />`
+            : `<div style="width:20px;height:20px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#8b5cf6);display:flex;align-items:center;justify-content:center;color:white;font-size:10px;font-weight:500;">${getInitials(user.name || 'U')}</div>`
+          }
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:500;color:#111827;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${displayName}
+          </div>
+          ${secondaryText ? `<div style="font-size:10px;color:#6b7280;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${secondaryText}</div>` : ''}
+        </div>
+        <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:#9ca3af;flex-shrink:0;" aria-hidden="true">
+          <path d="M7 13l6-6"/>
+          <path d="M9 7h4v4"/>
+          <path d="M5 5h6a4 4 0 0 1 4 4v6" opacity=".3"/>
+        </svg>
+      </div>
+    </div>
+  `;
 }
 
-function createPreviewBlock(metrics?: Partial<Metrics>): HTMLElement {
+function createPreviewBlock(metrics?: Partial<Metrics>, userData?: { user: any, workspace: any } | null): HTMLElement {
   const block = document.createElement("div");
   block.id = "pimms-analytics-block";
   block.style.cssText =
@@ -52,6 +144,7 @@ function createPreviewBlock(metrics?: Partial<Metrics>): HTMLElement {
         </svg>
       </div>
     </div>
+    ${userData ? createUserHeaderHTML(userData.user, userData.workspace) : ''}
     <!-- Footer action -->
     <div class="pimms-cards">
       <!-- Clicks card (blue) -->
@@ -120,7 +213,7 @@ function createPreviewBlock(metrics?: Partial<Metrics>): HTMLElement {
   return block;
 }
 
-function createSkeletonBlock(): HTMLElement {
+function createSkeletonBlock(userData?: { user: any, workspace: any } | null): HTMLElement {
   const el = document.createElement("div");
   el.id = "pimms-analytics-block";
   el.style.cssText =
@@ -139,6 +232,7 @@ function createSkeletonBlock(): HTMLElement {
       <div class="shimmer" style="width:200px;height:16px;border-radius:8px;"></div>
       <div class="shimmer" style="width:90px;height:22px;border-radius:9999px;"></div>
     </div>
+    ${userData ? createUserHeaderHTML(userData.user, userData.workspace) : ''}
     <div class="grid">
       ${Array.from({length:8}).map(()=>`
         <div class=\"card\">
@@ -153,22 +247,89 @@ function createSkeletonBlock(): HTMLElement {
 }
 
 /**
- * Try to inject the analytics preview block for the current page.
- * - For resend.com: locate `.scrollContainer`, then inside its first child, insert
- *   the block after the first child (second position).
- * - Otherwise, if config.analyticsPageXPath is provided, use XPath to locate a container
- *   and append the block once.
+ * Try to inject the analytics preview block for the current page based on the
+ * provided EmailMarketingDomainConfig. This is fully domain-agnostic and relies
+ * on the configuration (URL pattern, ready selector, XPath container, etc.).
  */
-export function tryInjectAnalyticsPreview(
+async function getUserData(): Promise<{ user: any, workspace: any } | null> {
+  try {
+    const requestId = `user_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    
+    const userPromise = new Promise<any>((resolve) => {
+      const timeout = setTimeout(() => {
+        try { chrome.runtime.onMessage.removeListener(onUserMsg as any); } catch {}
+        resolve(null);
+      }, 3000);
+
+      const onUserMsg = (msg: any) => {
+        if (msg?.type === 'CHECK_AUTH_RESULT' && msg.requestId === requestId) {
+          clearTimeout(timeout);
+          try { chrome.runtime.onMessage.removeListener(onUserMsg as any); } catch {}
+          resolve(msg.ok && msg.user ? msg.user : null);
+        }
+      };
+      
+      try {
+        chrome.runtime.onMessage.addListener(onUserMsg as any);
+        chrome.runtime.sendMessage({ type: 'CHECK_AUTH', requestId });
+      } catch {
+        clearTimeout(timeout);
+        resolve(null);
+      }
+    });
+
+    const user = await userPromise;
+    if (!user?.defaultWorkspace) return { user, workspace: null };
+
+    // Fetch workspace data if available
+    const workspaceRequestId = `workspace_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    
+    const workspacePromise = new Promise<any>((resolve) => {
+      const timeout = setTimeout(() => {
+        try { chrome.runtime.onMessage.removeListener(onWorkspaceMsg as any); } catch {}
+        resolve(null);
+      }, 3000);
+
+      const onWorkspaceMsg = (msg: any) => {
+        if (msg?.type === 'PIMMS_WORKSPACE_RESULT' && msg.requestId === workspaceRequestId) {
+          clearTimeout(timeout);
+          try { chrome.runtime.onMessage.removeListener(onWorkspaceMsg as any); } catch {}
+          resolve(msg.ok && msg.workspace ? msg.workspace : null);
+        }
+      };
+      
+      try {
+        chrome.runtime.onMessage.addListener(onWorkspaceMsg as any);
+        chrome.runtime.sendMessage({ 
+          type: 'PIMMS_WORKSPACE_REQUEST', 
+          requestId: workspaceRequestId,
+          workspaceSlug: user.defaultWorkspace
+        });
+      } catch {
+        clearTimeout(timeout);
+        resolve(null);
+      }
+    });
+
+    const workspace = await workspacePromise;
+    return { user, workspace };
+  } catch {
+    return null;
+  }
+}
+
+export async function tryInjectAnalyticsPreview(
   hostname: string,
   config?: EmailMarketingDomainConfig,
-): void {
+): Promise<void> {
+  // Hard gate: only when logged in. PanelApp owns CHECK_AUTH polling and sets a global flag.
+  try {
+    if (!(window as any).__pimmsIsLoggedIn) return;
+  } catch {}
   // Avoid duplicates globally
   if (document.getElementById("pimms-analytics-block")) return;
 
-  const host = hostname.toLowerCase();
-
-  // If a strict analytics URL pattern is provided, enforce it
+  // If an analytics URL pattern is provided, enforce it (supporting optional trailing segments)
   if (config?.analyticsPageUrlPattern) {
     try {
       const re = new RegExp(config.analyticsPageUrlPattern);
@@ -181,151 +342,57 @@ export function tryInjectAnalyticsPreview(
     }
   }
 
-  // 1) Resend.com special-case strategy
-  if (host === "resend.com" || host.endsWith(".resend.com")) {
-    const sc = document.querySelector(".scrollContainer") as HTMLElement | null;
-    if (!sc) return;
-    // If a ready selector is defined, wait for it to exist before showing anything
-    if (
-      config?.analyticsReadySelector &&
-      !document.querySelector(config.analyticsReadySelector)
-    ) {
-      return;
-    }
-    const firstChild = Array.from(sc.children).find((n) => n.nodeType === 1) as
-      | HTMLElement
-      | undefined;
-    if (!firstChild) return;
-    const parent = firstChild as HTMLElement;
-    // Inject skeleton first, then swap to data preview after a short delay
-    const skeleton = createSkeletonBlock();
-    const after = parent.children[1] || null; // second position
-    parent.insertBefore(skeleton, after);
-    logger.debug('[PIMMS][Analytics] Inserted skeleton at resend analytics container');
-    // Fetch analytics via offscreen and render
-    const requestId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const hostLower = hostname.toLowerCase();
-    const domainCfg = EMAIL_MARKETING_DOMAINS.find(d => hostLower === d.domain || hostLower.endsWith(`.${d.domain}`));
-    let utm_campaign: string | null = null;
-    if (domainCfg?.broadcastIdRegex) {
-      try { const re = new RegExp(domainCfg.broadcastIdRegex, 'i'); const m = re.exec(window.location.href); if (m && m[1]) utm_campaign = m[1]; } catch {}
-    }
-    if (!utm_campaign) {
-      try {
-        const path = window.location.pathname || '';
-        const parts = path.split('/').filter(Boolean);
-        const idx = parts.findIndex((p) => p.toLowerCase() === 'broadcasts');
-        const cand = idx >= 0 ? parts[idx + 1] : undefined;
-        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (cand && uuidRe.test(cand)) utm_campaign = cand;
-      } catch {}
-    }
-    const utm_source = domainCfg?.defaultUtmSource ?? 'resend.com';
-    const utm_medium = domainCfg?.defaultUtmMedium ?? 'email';
-    logger.debug('[PIMMS][Analytics] Sending request', { requestId, utm_source, utm_medium, utm_campaign });
-    // Update View full report link
-    try {
-      const link = skeleton.querySelector('#pimms-view-report') as HTMLAnchorElement | null;
-      if (link) {
-        const reportUrl = `https://app.pimms.io/docduo/analytics?interval=all${utm_campaign ? `&utm_campaign=${encodeURIComponent(utm_campaign)}` : ''}`;
-        link.href = reportUrl;
-      }
-    } catch {}
+  // Start fetching user data in the background; do NOT block initial injection
+  let cachedUserData: { user: any, workspace: any } | null = null;
+  const userDataPromise = getUserData()
+    .then((d) => {
+      cachedUserData = d;
+      return d;
+    })
+    .catch(() => null);
 
-    const onResult = (message: any) => {
-      if (!message || message.type !== 'PIMMS_ANALYTICS_RESULT' || message.requestId !== requestId) return;
-      chrome.runtime.onMessage.removeListener(onResult as any);
-      try {
-        const totals = message.totals || {};
-        const timeseries: Array<{ start: string | Date; clicks: number; leads: number; sales: number; saleAmount: number; }> = Array.isArray(message.timeseries) ? message.timeseries : [];
-        const clicks = Number(totals.clicks || 0);
-        const leads = Number(totals.leads || 0);
-        const salesCount = Number(totals.sales || 0);
-        const revenue = Number((totals.saleAmount || 0)) / 100;
-        const revenuePerClick = clicks > 0 ? revenue / clicks : 0;
-        const clickToLeadRate = clicks > 0 ? (leads / clicks) * 100 : 0;
-        const leadToSaleRate = leads > 0 ? (salesCount / leads) * 100 : 0;
-        const avgOrderValue = salesCount > 0 ? revenue / salesCount : 0;
-        // Recent visitors (same heuristic as web)
-        let recentVisitors = 0;
-        if (timeseries && timeseries.length > 1) {
-          const last = timeseries[timeseries.length - 1];
-          const prev = timeseries[timeseries.length - 2];
-          const tlast = new Date(last.start as any).getTime();
-          const tprev = new Date(prev.start as any).getTime();
-          if (tlast - tprev <= 2 * 60 * 60 * 1000) {
-            const oneHourAgo = Date.now() - 60 * 60 * 1000;
-            recentVisitors = timeseries
-              .filter((p: any) => new Date(p.start).getTime() >= oneHourAgo)
-              .reduce((acc: number, p: any) => acc + (p.clicks || 0), 0);
-          }
-        }
-        logger.debug('[PIMMS][Analytics] Result received', { totals, clicks, leads, salesCount, revenue, recentVisitors });
-        const block = createPreviewBlock({ clicks, leads, sales: revenue, revenue, revenuePerClick, clickToLeadRate, leadToSaleRate, avgOrderValue, recentVisitors });
-        try {
-          const btn = block.querySelector('#pimms-view-report') as HTMLAnchorElement | null;
-          if (btn) {
-            const reportUrl = `https://app.pimms.io/docduo/analytics?interval=all${utm_campaign ? `&utm_campaign=${encodeURIComponent(utm_campaign)}` : ''}`;
-            btn.href = reportUrl;
-          }
-        } catch {}
-        if (skeleton.isConnected) skeleton.replaceWith(block);
-      } catch {
-        logger.warn('[PIMMS][Analytics] Failed to render analytics, falling back to defaults');
-        if (skeleton.isConnected) skeleton.replaceWith(createPreviewBlock());
-      }
-    };
-    chrome.runtime.onMessage.addListener(onResult as any);
-    chrome.runtime.sendMessage({ type: 'ENSURE_OFFSCREEN' }, () => {
-      chrome.runtime.sendMessage({ type: 'PIMMS_ANALYTICS_REQUEST', requestId, utm_source, utm_medium, utm_campaign, _from: 'content' });
-    });
-    return;
-  }
-
-  // 2) Generic XPath strategy (optional)
+  // Primary: XPath-defined anchor ONLY. Insert AFTER the matched node.
   if (config?.analyticsPageXPath) {
     try {
-      if (
-        config?.analyticsReadySelector &&
-        !document.querySelector(config.analyticsReadySelector)
-      ) {
-        return;
+      let targetEl: HTMLElement | null = null;
+      try {
+        const res = document.evaluate(
+          config.analyticsPageXPath,
+          document,
+          null,
+          XPathResult.FIRST_ORDERED_NODE_TYPE,
+          null,
+        );
+        targetEl = res.singleNodeValue as HTMLElement | null;
+      } catch {}
+      if (!targetEl) {
+        logger.debug('[PIMMS][Analytics] XPath not found immediately; waiting', { xpath: config.analyticsPageXPath });
+        targetEl = await waitForXPath(config.analyticsPageXPath, 2500, 100);
       }
-      const res = document.evaluate(
-        config.analyticsPageXPath,
-        document,
-        null,
-        XPathResult.FIRST_ORDERED_NODE_TYPE,
-        null,
-      );
-      const container = res.singleNodeValue as HTMLElement | null;
-      if (container && !container.querySelector("#pimms-analytics-block")) {
-        const skeleton = createSkeletonBlock();
-        container.appendChild(skeleton);
-        logger.debug('[PIMMS][Analytics] Inserted skeleton at generic analytics container');
-        const requestId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        const hostLower = hostname.toLowerCase();
-        const domainCfg = EMAIL_MARKETING_DOMAINS.find(d => hostLower === d.domain || hostLower.endsWith(`.${d.domain}`));
-        let utm_campaign: string | null = null;
-        if (domainCfg?.broadcastIdRegex) {
-          try { const re = new RegExp(domainCfg.broadcastIdRegex, 'i'); const m = re.exec(window.location.href); if (m && m[1]) utm_campaign = m[1]; } catch {}
-        }
-        if (!utm_campaign) {
-          try {
-            const path = window.location.pathname || '';
-            const parts = path.split('/').filter(Boolean);
-            const idx = parts.findIndex((p) => p.toLowerCase() === 'broadcasts');
-            const cand = idx >= 0 ? parts[idx + 1] : undefined;
-            const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-            if (cand && uuidRe.test(cand)) utm_campaign = cand;
-          } catch {}
-        }
-        const utm_source = domainCfg?.defaultUtmSource ?? null;
-        const utm_medium = domainCfg?.defaultUtmMedium ?? null;
-        const onResult = (message: any) => {
+      if (targetEl && targetEl.parentElement) {
+        const skeleton = createSkeletonBlock(null);
+        const parentForInsert = targetEl.parentElement as HTMLElement;
+        if (parentForInsert.querySelector('#pimms-analytics-block')) return;
+        else parentForInsert.insertBefore(skeleton, targetEl);
+        
+        logger.debug('[PIMMS][Analytics] Inserted skeleton via XPath anchor (after matched node)');
+
+        const { requestId, utm_source, utm_medium, utm_campaign } = prepareAnalyticsRequest(hostname);
+        // Optionally update the skeleton's report link early
+        try {
+          const link = skeleton.querySelector('#pimms-view-report') as HTMLAnchorElement | null;
+          if (link) {
+            const reportUrl = `${APP_DOMAIN}/analytics?interval=all${utm_campaign ? `&utm_campaign=${encodeURIComponent(utm_campaign)}` : ''}`;
+            link.href = reportUrl;
+          }
+        } catch {}
+
+        const onResult = async (message: any) => {
           if (!message || message.type !== 'PIMMS_ANALYTICS_RESULT' || message.requestId !== requestId) return;
           chrome.runtime.onMessage.removeListener(onResult as any);
           try {
+            // Ensure user data is available (non-blocking; short timeout via race)
+            try { await Promise.race([userDataPromise, new Promise((r)=>setTimeout(r, 200))]); } catch {}
             const totals = message.totals || {};
             const timeseries: Array<{ start: string | Date; clicks: number; leads: number; sales: number; saleAmount: number; }> = Array.isArray(message.timeseries) ? message.timeseries : [];
             const clicks = Number(totals.clicks || 0);
@@ -349,25 +416,27 @@ export function tryInjectAnalyticsPreview(
                   .reduce((acc: number, p: any) => acc + (p.clicks || 0), 0);
               }
             }
-        logger.debug('[PIMMS][Analytics] Result received (generic)', { totals, clicks, leads, salesCount, revenue, recentVisitors });
-            const block = createPreviewBlock({ clicks, leads, sales: revenue, revenue, revenuePerClick, clickToLeadRate, leadToSaleRate, avgOrderValue, recentVisitors });
+            logger.debug('[PIMMS][Analytics] Result received (xpath)', { totals, clicks, leads, salesCount, revenue, recentVisitors });
+            const block = createPreviewBlock({ clicks, leads, sales: revenue, revenue, revenuePerClick, clickToLeadRate, leadToSaleRate, avgOrderValue, recentVisitors }, cachedUserData);
             try {
               const btn = block.querySelector('#pimms-view-report') as HTMLAnchorElement | null;
               if (btn) {
-                const reportUrl = `https://app.pimms.io/docduo/analytics?interval=all${utm_campaign ? `&utm_campaign=${encodeURIComponent(utm_campaign)}` : ''}`;
+                const reportUrl = `${APP_DOMAIN}/analytics?interval=all${utm_campaign ? `&utm_campaign=${encodeURIComponent(utm_campaign)}` : ''}`;
                 btn.href = reportUrl;
               }
             } catch {}
             if (skeleton.isConnected) skeleton.replaceWith(block);
           } catch {
-            logger.warn('[PIMMS][Analytics] Failed to render analytics (generic), falling back to defaults');
-            if (skeleton.isConnected) skeleton.replaceWith(createPreviewBlock());
+            logger.warn('[PIMMS][Analytics] Failed to render analytics (xpath), falling back to defaults');
+            if (skeleton.isConnected) skeleton.replaceWith(createPreviewBlock(undefined, cachedUserData));
           }
         };
         chrome.runtime.onMessage.addListener(onResult as any);
         chrome.runtime.sendMessage({ type: 'ENSURE_OFFSCREEN' }, () => {
           chrome.runtime.sendMessage({ type: 'PIMMS_ANALYTICS_REQUEST', requestId, utm_source, utm_medium, utm_campaign, _from: 'content' });
         });
+      } else {
+        logger.debug('[PIMMS][Analytics] XPath not found; skipping injection');
       }
     } catch {
       // ignore

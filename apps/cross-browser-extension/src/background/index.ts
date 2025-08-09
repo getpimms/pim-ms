@@ -1,172 +1,118 @@
 import { APP_DOMAIN } from "@dub/utils";
 import { logger } from "../utils/logger";
+import { EMAIL_MARKETING_DOMAINS } from "../contentScript/../types";
 
+const reqToTab = new Map<string, number>(); // requestId -> tabId
 let creatingOffscreen: Promise<void> | null = null;
-const pendingRequests = new Map<string, number>(); // requestId -> tabId
 
-async function ensureOffscreenDocument(path: string = 'offscreen.html'): Promise<void> {
+const ensureOffscreenDocument = async (): Promise<void> => {
+  if (!chrome.offscreen?.createDocument) return;
+  if (creatingOffscreen) { await creatingOffscreen; return; }
+  
   try {
-    const offscreenUrl = chrome.runtime.getURL(path);
-    const getContexts = (chrome.runtime as any).getContexts as ((query: any) => Promise<any[]>) | undefined;
-
-    if (getContexts) {
-      const contexts = await getContexts({
-        contextTypes: [(chrome.runtime as any).ContextType?.OFFSCREEN_DOCUMENT || 'OFFSCREEN_DOCUMENT'],
-        documentUrls: [offscreenUrl],
-      });
-      if (contexts && contexts.length > 0) {
-        logger.debug('🟢 Offscreen already exists');
-        return;
-      }
-    } else if ((chrome.offscreen as any)?.hasDocument) {
+    if ((chrome.offscreen as any)?.hasDocument) {
       const has = await (chrome.offscreen as any).hasDocument();
-      if (has) {
-        logger.debug('🟢 Offscreen already exists (hasDocument)');
-        return;
-      }
+      if (has) return;
     }
-
-    if (!chrome.offscreen || !chrome.offscreen.createDocument) {
-      logger.warn('⚠️ chrome.offscreen not available');
-      return;
-    }
-
-    if (creatingOffscreen) {
-      logger.debug('⏳ Offscreen creation in progress – awaiting existing promise');
-      await creatingOffscreen;
-      return;
-    }
-
-    logger.debug('🟠 Creating offscreen document...');
+    
     creatingOffscreen = chrome.offscreen.createDocument({
-      url: offscreenUrl,
-      reasons: [
-        (chrome.offscreen as any).Reason?.LOCAL_STORAGE || 'LOCAL_STORAGE',
-        (chrome.offscreen as any).Reason?.IFRAME_SCRIPTING || 'IFRAME_SCRIPTING',
-      ],
-      justification: 'Call API, tracking, and logging',
-    } as any);
+      url: chrome.runtime.getURL("offscreen.html"),
+      reasons: [(chrome.offscreen as any).Reason?.IFRAME_SCRIPTING || "IFRAME_SCRIPTING"],
+      justification: "PIMMS cross-origin fetch",
+    } as any).finally(() => { creatingOffscreen = null; });
+    
     await creatingOffscreen;
-    creatingOffscreen = null;
-    logger.debug('✅ Offscreen document created');
-  } catch (err) {
-    logger.error('❌ Failed to ensure offscreen document', err);
+  } catch (e) {
+    logger.warn("offscreen ensure failed", e);
   }
-}
+};
 
-// Background script for PIMMS extension
-logger.info('🚀 PIMMS Background script loaded');
-// Attempt to warm up the offscreen doc on service worker start
-ensureOffscreenDocument('offscreen.html');
+const forwardToOffscreen = (message: any, sender: chrome.runtime.MessageSender, sendResponse: (resp: any) => void) => {
+  (async () => {
+    await ensureOffscreenDocument();
+    const tabId = sender.tab?.id;
+    if (tabId && message.requestId) reqToTab.set(message.requestId, tabId);
+    chrome.runtime.sendMessage({ ...message, forwarded: true, _from: "background" });
+    sendResponse({ ok: true });
+  })();
+  return true;
+};
 
-// Handle icon click - open PIMMS web app
-chrome.action.onClicked.addListener((tab) => {
-  logger.info('🔗 PIMMS icon clicked, opening web app');
+logger.info("🚀 PIMMS Background script loaded");
+ensureOffscreenDocument();
+
+chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: APP_DOMAIN });
 });
 
-chrome.runtime.onInstalled.addListener(() => {
-  ensureOffscreenDocument('offscreen.html');
-});
-
-// Handle messages from content script (minimal now since we use React panel)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  logger.debug('📨 Background received message:', message);
-  
-  try {
-    switch (message.type) {
-      case 'ENSURE_OFFSCREEN':
-        (async () => {
-          await ensureOffscreenDocument('offscreen.html');
-          logger.debug('BACKGROUND: ENSURE_OFFSCREEN resolved');
-          sendResponse({ ok: true });
-        })();
-        return true;
-      case 'PIMMS_SHORTEN_REQUEST':
-        // Ensure offscreen exists then forward the message
-        (async () => {
-          await ensureOffscreenDocument('offscreen.html');
-          const tabId = sender.tab?.id;
-          if (tabId && message.requestId) {
-            pendingRequests.set(message.requestId as string, tabId);
-            logger.debug('BACKGROUND: Stored pending request', { requestId: message.requestId, tabId });
-          } else {
-            logger.warn('BACKGROUND: Missing tabId or requestId on shorten request');
-          }
-          // Forward to offscreen
-          logger.debug('BACKGROUND: Forwarding to offscreen', message);
-          chrome.runtime.sendMessage({ ...message, forwarded: true, _from: 'background' });
-          sendResponse({ ok: true });
-        })();
-        return true;
-      case 'PIMMS_ANALYTICS_REQUEST':
-        (async () => {
-          await ensureOffscreenDocument('offscreen.html');
-          const tabId = sender.tab?.id;
-          if (tabId && message.requestId) {
-            pendingRequests.set(message.requestId as string, tabId);
-            logger.debug('BACKGROUND: Stored pending analytics request', { requestId: message.requestId, tabId });
-          } else {
-            logger.warn('BACKGROUND: Missing tabId or requestId on analytics request');
-          }
-          logger.debug('BACKGROUND: Forwarding analytics request to offscreen', message);
-          chrome.runtime.sendMessage({ ...message, forwarded: true, _from: 'background' });
-          sendResponse({ ok: true });
-        })();
-        return true;
-      case 'PIMMS_SHORTEN_RESULT': {
-        const requestId = message.requestId as string | undefined;
-        if (requestId && pendingRequests.has(requestId)) {
-          const tabId = pendingRequests.get(requestId)!;
-          logger.debug('BACKGROUND: Forwarding RESULT to tab', { requestId, tabId });
-          chrome.tabs.sendMessage(tabId, message, () => {
-            const lastError = chrome.runtime.lastError;
-            if (lastError) {
-              logger.warn('BACKGROUND: Failed to send result to tab', lastError.message);
-            }
-          });
-          pendingRequests.delete(requestId);
-        } else {
-          logger.warn('BACKGROUND: No pending request mapping for result', { requestId });
-        }
-        return false;
-      }
-      case 'PIMMS_ANALYTICS_RESULT': {
-        const requestId = message.requestId as string | undefined;
-        logger.debug('BACKGROUND: Received PIMMS_ANALYTICS_RESULT', { requestId, ok: message.ok });
-        if (requestId && pendingRequests.has(requestId)) {
-          const tabId = pendingRequests.get(requestId)!;
-          logger.debug('BACKGROUND: Forwarding ANALYTICS RESULT to tab', { requestId, tabId });
-          chrome.tabs.sendMessage(tabId, message, () => {
-            const lastError = chrome.runtime.lastError;
-            if (lastError) {
-              logger.warn('BACKGROUND: Failed to send analytics result to tab', lastError.message);
-            }
-          });
-          pendingRequests.delete(requestId);
-        } else {
-          logger.warn('BACKGROUND: No pending request mapping for analytics result', { requestId });
-        }
-        return false;
-      }
-      case 'OPEN_WEB_APP':
-        const fullUrl = message.url || APP_DOMAIN;
-        chrome.tabs.create({ url: fullUrl });
-        return false; // No response needed
-        
-      default:
-        logger.warn('❓ Unknown message type in background:', message.type);
-        return false; // No response needed
-    }
-  } catch (error) {
-    logger.error('⚠️ Error in background message handler:', error);
-    return false;
+chrome.runtime.onInstalled.addListener((details) => {
+  ensureOffscreenDocument();
+  if (details.reason === "install") {
+    chrome.tabs.create({ url: `${APP_DOMAIN}/register` });
   }
 });
 
-// Handle tab updates
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url) {
-    logger.debug('📄 Tab updated:', tab.url);
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  try {
+    switch (message.type) {
+      case "PIMMS_SHOULD_INJECT": {
+        try {
+          const href: string = message.href || sender.tab?.url || "";
+          const host = (() => {
+            try { return new URL(href).hostname.toLowerCase(); } catch { return ""; }
+          })();
+          const cfg = EMAIL_MARKETING_DOMAINS.find(d => host === d.domain || host.endsWith(`.${d.domain}`));
+          if (!cfg) { sendResponse({ ok: false, reason: "host_not_supported" }); return false; }
+
+          const patterns: string[] = [];
+          if (cfg.detectionPageUrlPattern) patterns.push(cfg.detectionPageUrlPattern);
+          if (cfg.analyticsPageUrlPattern) patterns.push(cfg.analyticsPageUrlPattern);
+          if (Array.isArray(cfg.onboardingPageUrlPatterns)) patterns.push(...cfg.onboardingPageUrlPatterns);
+          const allowed = patterns.some(p => {
+            try { return new RegExp(p).test(href); } catch { return false; }
+          });
+          sendResponse({ ok: allowed, reason: allowed ? "matched" : "no_pattern_match" });
+          return true;
+        } catch {
+          sendResponse({ ok: false, reason: "error" });
+          return true;
+        }
+      }
+      case "PIMMS_INJECT_CONTENT_BUNDLE":
+        try {
+          chrome.scripting.executeScript({
+            target: { tabId: sender.tab?.id!, allFrames: false },
+            files: ["static/js/contentScript.bundle.js"],
+          });
+        } catch {}
+        return false;
+      case "ENSURE_OFFSCREEN":
+        (async () => { await ensureOffscreenDocument(); sendResponse({ ok: true }); })();
+        return true;
+      case "PIMMS_SHORTEN_REQUEST":
+      case "PIMMS_ANALYTICS_REQUEST":
+      case "CHECK_AUTH":
+      case "PIMMS_WORKSPACE_REQUEST":
+        return forwardToOffscreen(message, sender, sendResponse);
+      case "PIMMS_SHORTEN_RESULT":
+      case "PIMMS_ANALYTICS_RESULT":
+      case "CHECK_AUTH_RESULT":
+      case "PIMMS_WORKSPACE_RESULT": {
+        const requestId = message.requestId as string | undefined;
+        if (requestId && reqToTab.has(requestId)) {
+          const tabId = reqToTab.get(requestId)!;
+          chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
+          reqToTab.delete(requestId);
+        }
+        return false;
+      }
+      case "OPEN_WEB_APP":
+        chrome.tabs.create({ url: message.url || APP_DOMAIN });
+        return false;
+      default:
+        return false;
+    }
+  } catch {
+    return false;
   }
 });

@@ -15,10 +15,12 @@ class HoverHandler {
   }
 
   private setupHoverListeners() {
-    // Set up listeners for all detected links
+    // Set up listeners for all detected links (dedupe by element)
     const links = this.linkDetector.getCurrentLinks();
-    
-    links.forEach(link => {
+    const seen = new WeakSet<HTMLElement>();
+    links.forEach((link) => {
+      if (!link.element || seen.has(link.element)) return;
+      seen.add(link.element);
       this.addHoverListener(link);
     });
   }
@@ -57,8 +59,8 @@ class HoverHandler {
 
     // Store and add listeners
     this.linkListeners.set(element, listeners);
-    element.addEventListener('mouseenter', listeners.mouseEnter);
-    element.addEventListener('mouseleave', listeners.mouseLeave);
+    element.addEventListener('mouseenter', listeners.mouseEnter, { passive: true } as any);
+    element.addEventListener('mouseleave', listeners.mouseLeave, { passive: true } as any);
   }
 
   private showHoveredLink(link: LinkData) {
@@ -100,6 +102,22 @@ class HoverHandler {
       cancelAnimationFrame(this.hoverRaf);
       this.hoverRaf = null;
     }
+    // Remove listeners from tracked elements using current links (WeakMap is not iterable)
+    const links = this.linkDetector.getCurrentLinks();
+    const seen = new WeakSet<HTMLElement>();
+    links.forEach((l) => {
+      const el = l.element;
+      if (!el || seen.has(el)) return;
+      seen.add(el);
+      const ls = this.linkListeners.get(el);
+      if (ls) {
+        try {
+          el.removeEventListener('mouseenter', ls.mouseEnter);
+          el.removeEventListener('mouseleave', ls.mouseLeave);
+        } catch {}
+      }
+    });
+    this.linkListeners = new WeakMap();
   }
 }
 
